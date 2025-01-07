@@ -5,82 +5,75 @@ import sys
 import socket
 import time
 import signal
+import random
+from datetime import datetime, timezone
 
-import influxdb_client
-from influxdb_client.client.write_api import SYNCHRONOUS
+import argparse
 
-assert len(sys.argv) == 2, 'wrong argument count. expected `python3 sock_client.py 127.0.0.1:8080`'
+parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
-url = os.environ['INFLUX_URL']
-token = os.environ['INFLUX_TOKEN']
-org = os.environ['INFLUX_ORG']
-bucket = os.environ['INFLUX_BUCKET']
+parser.add_argument('-s', '--server', type=str, default='localhost', help='server address to connect to')
+parser.add_argument('-p', '--port', type=int, default=8080, help='port number to connect to on the server')
+parser.add_argument('-x', '--run-count', type=int, default=1, help='number of times to run the test')
+parser.add_argument('-n', '--requests', type=int, default=5, help='number of requests to send per run')
+parser.add_argument('-l', '--log-dir', type=str, default='/tmp/ping', help='Directory path to output the log file')
 
-influx = influxdb_client.InfluxDBClient(
-  url=url,
-  token=token,
-  org=org,
-)
+args = parser.parse_args()
 
-influx_write_api = influx.write_api(write_options=SYNCHRONOUS)
-
-#[HOST, PORT] = '192.168.0.112:6300'.split(':')
-[HOST, PORT] = sys.argv[1].split(':')
-PORT = int(PORT)
-
-times = []
+os.makedirs(args.log_dir, exist_ok=True)
+timestamp = datetime.now(timezone.utc).isoformat()
+filename = f"ping_{timestamp}.csv"
+log_path = os.path.join(args.log_dir, filename)
 
 should_exit = 0
 def signal_handler(signum, frame):
+  if signum != signal.SIGINT:
+    return
   global should_exit
   global sock
   should_exit += 1
   signame = signal.Signals(signum).name
-  print(f'got signal: {signame} ({signum})')
+
   if should_exit >= 2:
-    sock.close()
+    try:
+      sock.close()
+    except NameError:
+      pass
     sys.exit()
 
 signal.signal(signal.SIGINT, signal_handler)
 
-sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-sock.connect((HOST, PORT))
+with open(log_path, 'w') as f:
+  log = 'run,start,end\n'
+  print(log, end='')
+  f.write(log)
 
-while should_exit == 0:
-  start = time.time_ns()
-  try:
-    data = f'ping-{start}'.encode()
-    sock.sendall(data)
-    data_recv = sock.recv(1024)
-    if not data_recv: break
-  except Exception as e:
-    print(e)
-    break
+  for run_iteration in range(args.run_count):
+    if should_exit > 0:
+      break
 
-  end = time.time_ns()
-  diff = end - start
+    time.sleep(2)
+    global sock
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.connect((args.server, args.port))
 
-  print(f'{len(times)},{diff}')
+    for records in range(args.requests):
+      if should_exit > 0:
+        break
 
-  datapoint = influxdb_client
-    .Point('latency')
-    .tag('workload', 'ping-echo')
-    .field('start', start)
-    .field('end', end)
-    .field('diff', diff)
-    .time(end, write_precision='ns')
-  write_api.write(org=org, bucket=bucket, record=[datapoint])
+      start = time.time_ns()
+      try:
+        data = f'ping-{start}'.encode()
+        sock.sendall(data)
+        data_recv = sock.recv(1024)
+        if not data_recv: break
+      except Exception as e:
+        print(e)
+        break
+      end = time.time_ns()
 
-  times.append(diff)
-  time.sleep(.1 - diff * 1e+9)
+      log = f'{run_iteration},{start},{end}\n'
+      print(log, end='')
+      f.write(log)
 
-print('\nclosing socket')
-sock.close()
-if len(times) > 0:
-  metrics = {}
-  metrics['sum'] = sum(times)
-  metrics['count'] = len(times)
-  metrics['min'] = min(times)
-  metrics['max'] = max(times)
-  metrics['avg'] = metrics['sum'] / metrics['count']
-  print(metrics)
+    sock.close()

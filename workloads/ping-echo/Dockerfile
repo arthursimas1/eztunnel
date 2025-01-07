@@ -1,11 +1,9 @@
 ARG ARCH=
 FROM ${ARCH}python:3.12.3-alpine3.19 AS base
 
-LABEL org.opencontainers.image.source https://github.com/arthursimas1/k8s-ebpf-offloading
+LABEL org.opencontainers.image.source https://github.com/arthursimas1/eztunnel
 
 FROM base AS runtime
-
-RUN pip install influxdb-client
 
 COPY sock_tcp_client.py /
 COPY sock_tcp_server.py /
