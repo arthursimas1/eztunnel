@@ -53,6 +53,7 @@ spec:
     app: redis
   ports:
   - protocol: TCP
+    appProtocol: tcp
     port: 6379
     targetPort: 6379
     appProtocol: tcp
